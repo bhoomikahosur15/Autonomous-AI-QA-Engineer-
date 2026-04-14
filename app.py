@@ -169,7 +169,7 @@ st.title("🤖 AI QA Testing Dashboard")
 
 url = st.text_input("🌐 Enter Website URL")
 
-if st.button("🚀 Run Testing"):
+if st.button(" Run Testing"):
 
     if url:
         st.info("Running automated QA tests...")
