@@ -8,7 +8,7 @@ os.makedirs("screenshots", exist_ok=True)
 
 # ================= GET ALL INTERACTIVE ELEMENTS =================
 async def get_all_elements(page):
-    elements = await page.query_selector_all("a, button, input")
+    elements = await page.query_selector_all("*")
 
     valid = []
 
