@@ -181,8 +181,8 @@ async def run_agent(url):
 # ================= UI =================
 st.set_page_config(page_title="AI QA Agent", layout="wide")
 
-st.title("🚀 Autonomous UI QA Agent")
-st.markdown("### 🧠 Explores UI, generates tests, finds bugs automatically")
+st.title("AI QA Testing Agent")
+
 
 url = st.text_input("🌐 Enter Website URL")
 
