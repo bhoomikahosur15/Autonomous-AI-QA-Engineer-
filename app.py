@@ -56,7 +56,6 @@ async def prioritize_elements(page):
                 score += 5
 
             scored.append((score, el, text))
-
         except:
             continue
 
