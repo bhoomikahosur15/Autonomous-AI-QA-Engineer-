@@ -186,4 +186,3 @@ if st.button("Run"):
 
             for b in r["test_case"]["bugs"]:
                 st.write("-", b)
-```
