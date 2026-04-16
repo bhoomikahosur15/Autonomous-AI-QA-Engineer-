@@ -176,7 +176,7 @@ async def run_agent(url):
 # ================= UI =================
 st.set_page_config(page_title="AI QA Agent", layout="wide")
 
-st.title("🤖 Smart AI QA Testing Agent")
+st.title("AI QA Testing Agent")
 
 url = st.text_input("🌐 Enter Website URL")
 
@@ -186,7 +186,7 @@ if st.button("Run QA Agent"):
         st.warning("Please enter a URL")
 
     else:
-        st.info("Running combined UI + interaction testing...")
+        st.info("Running QA testing...")
 
         try:
             loop = asyncio.new_event_loop()
