@@ -19,7 +19,7 @@ async def detect_bugs(page):
         if "404" in body:
             bugs.append("Broken page (404)")
 
-        if len(body.strip()) < 80:
+        if len(body.strip()) < 20:
             bugs.append("Page content too small")
 
     except Exception as e:
