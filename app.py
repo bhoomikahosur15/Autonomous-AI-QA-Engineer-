@@ -1,4 +1,3 @@
-
 import streamlit as st
 import asyncio
 import os
@@ -7,22 +6,20 @@ from playwright.async_api import async_playwright
 os.makedirs("screenshots", exist_ok=True)
 
 
-# ================= GET ELEMENTS (FAST) =================
+# ================= GET ALL INTERACTIVE ELEMENTS =================
 async def get_all_elements(page):
     elements = await page.query_selector_all("a, button, input")
+
     valid = []
 
-    for el in elements[:20]:   # ✅ small cap for speed
+    for el in elements:
         try:
-            if not await el.is_visible():
+            visible = await el.is_visible()
+            if not visible:
                 continue
 
             tag = await el.evaluate("(e) => e.tagName")
-
-            if tag == "INPUT":
-                text = "input"
-            else:
-                text = (await el.inner_text() or "").strip()
+            text = (await el.inner_text()).strip() if tag != "INPUT" else "input field"
 
             if text or tag == "INPUT":
                 valid.append((el, tag, text))
@@ -30,50 +27,70 @@ async def get_all_elements(page):
         except:
             continue
 
-    return valid
+    return valid[:15]  # limit for speed
 
 
-# ================= SIMPLE PRIORITY =================
+# ================= SMART PRIORITY =================
 def score_element(tag, text):
     text = text.lower()
 
-    if "login" in text or "sign" in text:
-        return 5
+    score = 0
+
+    if any(k in text for k in ["login", "sign", "submit", "next", "buy"]):
+        score += 5
+
     if tag == "INPUT":
-        return 4
-    return 1
+        score += 4
+
+    if any(k in text for k in ["menu", "home", "product"]):
+        score += 3
+
+    if text:
+        score += 1
+
+    return score
 
 
-# ================= FAST BUG CHECK =================
+# ================= BUG DETECTION =================
 async def detect_bugs(page, prev_url):
     bugs = []
 
     try:
+        body = await page.inner_text("body")
+
         if page.url == prev_url:
-            bugs.append("No navigation")
+            bugs.append("No navigation or state change after action")
 
-        title = await page.title()
+        if "error" in body.lower():
+            bugs.append("Error message visible")
 
-        if "error" in title.lower():
-            bugs.append("Error page")
+        if "404" in body:
+            bugs.append("Broken link (404)")
+
+        if len(body.strip()) < 50:
+            bugs.append("Page appears empty")
 
     except:
-        bugs.append("Check failed")
+        bugs.append("Page analysis failed")
 
     return bugs
 
 
-# ================= CORE =================
-async def explore(browser, url, max_steps=5):   # ✅ reduced steps
+# ================= TEST CASE =================
+def create_test_case(action, bugs):
+    return {
+        "title": f"Verify {action}",
+        "status": "Failed" if bugs else "Passed",
+        "bugs": bugs
+    }
+
+
+# ================= MAIN EXPLORATION =================
+async def explore(browser, url, max_steps=10):
     page = await browser.new_page()
+    await page.goto(url)
 
-    try:
-        # ✅ FAST LOAD
-        await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-    except:
-        return [{"step": 1, "action": "Page failed to load", "test_case": {"status": "Failed", "bugs": ["Timeout"]}, "screenshot": None}]
-
-    visited = set()
+    visited_actions = set()
     results = []
 
     for step in range(max_steps):
@@ -83,66 +100,76 @@ async def explore(browser, url, max_steps=5):   # ✅ reduced steps
         if not elements:
             break
 
-        elements = sorted(
+        # 🔥 prioritize elements
+        scored = sorted(
             [(score_element(tag, text), el, tag, text) for el, tag, text in elements],
-            reverse=True
+            reverse=True,
+            key=lambda x: x[0]
         )
 
         selected = None
 
-        for _, el, tag, text in elements:
-            key = f"{page.url}-{text}"
+        for score, el, tag, text in scored:
+            action_id = f"{page.url}-{text}"
 
-            if key not in visited:
+            if action_id not in visited_actions:
                 selected = (el, tag, text)
-                visited.add(key)
+                visited_actions.add(action_id)
                 break
 
         if not selected:
             break
 
         el, tag, text = selected
+
         prev_url = page.url
 
         try:
             if tag == "INPUT":
-                await el.fill("test")
-                action = "fill input"
-            else:
-                await el.click()
-                action = f"click {text[:20]}"
+                await el.fill("test123")
+                action = f"enter input in field"
 
-            # ✅ SMALL WAIT (FAST)
-            await page.wait_for_timeout(1500)
+            else:
+                await el.click(timeout=3000)
+                action = f"click '{text[:30]}'"
+
+            await page.wait_for_load_state("domcontentloaded")
 
             bugs = await detect_bugs(page, prev_url)
 
-        except Exception as e:
-            bugs = [str(e)]
-            action = "failed"
+            screenshot = None
+            if bugs:
+                filename = f"screenshots/step_{step}.png"
+                await page.screenshot(path=filename)
+                screenshot = filename
 
-        results.append({
-            "step": step + 1,
-            "action": action,
-            "test_case": {
-                "title": action,
-                "status": "Failed" if bugs else "Passed",
-                "bugs": bugs
-            },
-            "screenshot": None
-        })
+            results.append({
+                "step": step + 1,
+                "action": action,
+                "test_case": create_test_case(action, bugs),
+                "screenshot": screenshot
+            })
+
+        except Exception as e:
+            results.append({
+                "step": step + 1,
+                "action": "interaction failed",
+                "test_case": {
+                    "title": "Interaction Test",
+                    "status": "Failed",
+                    "bugs": [str(e)]
+                },
+                "screenshot": None
+            })
 
     await page.close()
     return results
 
 
-# ================= RUN =================
+# ================= RUN AGENT =================
 async def run_agent(url):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
-        )
+        browser = await p.chromium.launch(headless=True)
 
         results = await explore(browser, url)
 
@@ -154,35 +181,51 @@ async def run_agent(url):
 # ================= UI =================
 st.set_page_config(page_title="AI QA Agent", layout="wide")
 
-st.title("⚡ Fast AI QA Agent")
+st.title("AI QA Testing Agent")
 
-url = st.text_input("Enter URL")
 
-if st.button("Run"):
+url = st.text_input("🌐 Enter Website URL")
+
+if st.button("Run QA Agent"):
 
     if not url:
         st.warning("Enter URL")
     else:
-        st.info("Running fast test...")
+        st.info("Exploring UI and detecting issues...")
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        results = loop.run_until_complete(run_agent(url))
+        results = asyncio.run(run_agent(url))
 
         total = len(results)
         failed = sum(1 for r in results if r["test_case"]["status"] == "Failed")
+        passed = total - failed
 
-        st.metric("Total", total)
-        st.metric("Failed", failed)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Passed", passed)
+        col2.metric("Failed", failed)
+        col3.metric("Total Tests", total)
+
+        st.divider()
 
         for r in results:
-            st.markdown(f"### Step {r['step']}")
-            st.write("Action:", r["action"])
+            st.markdown(f"## 🔍 Step {r['step']}")
 
-            if r["test_case"]["status"] == "Passed":
-                st.success("Passed")
+            st.markdown(f"👉 Action: {r['action']}")
+
+            tc = r["test_case"]
+
+            if tc["status"] == "Passed":
+                st.success("Test Passed")
             else:
-                st.error("Failed")
+                st.error("Test Failed")
 
-            for b in r["test_case"]["bugs"]:
-                st.write("-", b)
+            st.markdown(f"📋 Test Case: {tc['title']}")
+
+            if tc["bugs"]:
+                st.markdown("⚠️ Bugs Found:")
+                for b in tc["bugs"]:
+                    st.markdown(f"- {b}")
+
+            if r["screenshot"]:
+                st.image(r["screenshot"])
+
+            st.divider()
