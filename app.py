@@ -174,7 +174,8 @@ if st.button("Run QA Agent"):
             if r["screenshot"]:
                 st.image(r["screenshot"])
 
-            st.divider()        try:
+            st.divider()        
+        try:
             await page.goto(url, timeout=10000, wait_until="domcontentloaded")
         except:
             await page.close()
