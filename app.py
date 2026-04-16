@@ -26,13 +26,12 @@ async def get_all_elements(page):
         except:
             continue
 
-    return valid[:10]  # reduce for speed
+    return valid[:10]  # limit for speed
 
 
 # ================= SMART PRIORITY =================
 def score_element(tag, text):
     text = text.lower()
-
     score = 0
 
     if any(k in text for k in ["login", "sign", "submit", "next", "buy"]):
@@ -85,15 +84,24 @@ def create_test_case(action, bugs):
 
 
 # ================= MAIN EXPLORATION =================
-async def explore(browser, url, max_steps=8):
+async def explore(context, url, max_steps=8):
 
-    page = await browser.new_page()
+    page = await context.new_page()
 
-    # 🔥 FIX 1: DO NOT WAIT FULL LOAD
+    # 🔥 SAFE PAGE LOAD (handles blocked sites)
     try:
-        await page.goto(url, timeout=15000, wait_until="domcontentloaded")
+        await page.goto(url, timeout=20000, wait_until="commit")
     except:
-        return [{"step": 0, "action": "Page load failed", "test_case": {"status": "Failed", "bugs": ["Initial load timeout"]}, "screenshot": None}]
+        return [{
+            "step": 0,
+            "action": "Page load failed",
+            "test_case": {
+                "title": "Initial Load",
+                "status": "Failed",
+                "bugs": ["Initial load timeout / site blocking bot"]
+            },
+            "screenshot": None
+        }]
 
     visited_actions = set()
     results = []
@@ -135,7 +143,6 @@ async def explore(browser, url, max_steps=8):
                 await el.click(timeout=5000)
                 action = f"click '{text[:25]}'"
 
-            # 🔥 FIX 2: smarter wait
             await page.wait_for_load_state("domcontentloaded")
 
             bugs = await detect_bugs(page, prev_url)
@@ -173,13 +180,22 @@ async def explore(browser, url, max_steps=8):
 async def run_agent(url):
     async with async_playwright() as p:
 
-        # 🔥 FIX 3: better launch config for Render
+        # 🔥 STEALTH BROWSER (important)
         browser = await p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
+            headless=True,  # change to False for stronger bypass
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
+            ]
         )
 
-        results = await explore(browser, url)
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            viewport={"width": 1280, "height": 800}
+        )
+
+        results = await explore(context, url)
 
         await browser.close()
 
@@ -189,18 +205,18 @@ async def run_agent(url):
 # ================= STREAMLIT UI =================
 st.set_page_config(page_title="AI QA Agent", layout="wide")
 
-st.title("AI QA Testing Agent")
+st.title("🤖 AI QA Testing Agent")
 
 url = st.text_input("🌐 Enter Website URL")
 
 if st.button("Run QA Agent"):
 
     if not url:
-        st.warning("Enter URL")
+        st.warning("Please enter a URL")
     else:
         st.info("Exploring UI and detecting issues...")
 
-        # 🔥 FIX 4: SAFE async handling
+        # 🔥 SAFE ASYNC HANDLING
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         results = loop.run_until_complete(run_agent(url))
@@ -226,6 +242,8 @@ if st.button("Run QA Agent"):
                 st.success("Test Passed")
             else:
                 st.error("Test Failed")
+
+            st.markdown(f"📋 {tc['title']}")
 
             if tc["bugs"]:
                 for b in tc["bugs"]:
