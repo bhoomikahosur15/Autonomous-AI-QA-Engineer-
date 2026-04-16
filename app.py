@@ -4,7 +4,6 @@ import os
 from urllib.parse import urljoin, urlparse
 from playwright.async_api import async_playwright
 
-# Create screenshots folder
 os.makedirs("screenshots", exist_ok=True)
 
 
@@ -14,9 +13,11 @@ async def detect_bugs(page):
 
     try:
         body = await page.inner_text("body")
+        body_lower = body.lower()
 
-        if "error" in body.lower():
-            bugs.append("Error message visible")
+        # Ignore login-related "error"
+        if "login" not in body_lower and "error" in body_lower:
+            bugs.append("Unexpected error message")
 
         if "404" in body:
             bugs.append("Broken page (404)")
@@ -28,6 +29,36 @@ async def detect_bugs(page):
         bugs.append(f"Analysis failed: {str(e)}")
 
     return bugs
+
+
+# ================= ELEMENT TESTING =================
+async def test_elements(page):
+    actions = []
+    bugs = []
+
+    try:
+        elements = await page.query_selector_all("a, button")
+
+        for el in elements[:2]:  # limit for speed
+            try:
+                text = (await el.inner_text()).strip()
+                prev_url = page.url
+
+                await el.click(timeout=3000)
+                await page.wait_for_load_state("domcontentloaded")
+
+                if page.url == prev_url:
+                    bugs.append(f"No navigation after clicking '{text}'")
+
+                actions.append(f"Clicked '{text}'")
+
+            except Exception as e:
+                bugs.append(f"Interaction failed: {str(e)}")
+
+    except:
+        bugs.append("Element detection failed")
+
+    return actions, bugs
 
 
 # ================= LINK VALIDATION =================
@@ -44,8 +75,8 @@ def is_valid_link(base_url, link):
     )
 
 
-# ================= MULTI-PAGE EXPLORATION =================
-async def explore(context, start_url, max_pages=5):
+# ================= MAIN AGENT =================
+async def explore(context, start_url, max_pages=3):
 
     visited = set()
     queue = [start_url]
@@ -63,23 +94,35 @@ async def explore(context, start_url, max_pages=5):
         page = await context.new_page()
 
         try:
-            # Load page
             await page.goto(url, timeout=10000, wait_until="domcontentloaded")
 
-            # Detect bugs
-            bugs = await detect_bugs(page)
+            # 🧠 TEST CASE DESCRIPTION
+            test_case = [
+                "Page Load Validation",
+                "UI Content Validation",
+                "Element Interaction Testing"
+            ]
 
-            # Screenshot
-            screenshot_path = f"screenshots/page_{len(visited)}.png"
-            await page.screenshot(path=screenshot_path)
+            # 🔍 Page-level bugs
+            page_bugs = await detect_bugs(page)
+
+            # 🖱 Element-level testing
+            actions, element_bugs = await test_elements(page)
+
+            all_bugs = page_bugs + element_bugs
+
+            screenshot = f"screenshots/page_{len(visited)}.png"
+            await page.screenshot(path=screenshot)
 
             results.append({
                 "url": url,
-                "bugs": bugs,
-                "screenshot": screenshot_path
+                "test_case": test_case,
+                "actions": actions,
+                "bugs": all_bugs,
+                "screenshot": screenshot
             })
 
-            # Extract links
+            # 🔗 Extract links
             anchors = await page.query_selector_all("a")
 
             for a in anchors:
@@ -100,6 +143,8 @@ async def explore(context, start_url, max_pages=5):
         except Exception as e:
             results.append({
                 "url": url,
+                "test_case": ["Page Load"],
+                "actions": [],
                 "bugs": [f"Page failed: {str(e)}"],
                 "screenshot": None
             })
@@ -110,7 +155,7 @@ async def explore(context, start_url, max_pages=5):
     return results
 
 
-# ================= RUN AGENT =================
+# ================= RUN =================
 async def run_agent(url):
     async with async_playwright() as p:
 
@@ -128,10 +173,10 @@ async def run_agent(url):
     return results
 
 
-# ================= STREAMLIT UI =================
+# ================= UI =================
 st.set_page_config(page_title="AI QA Agent", layout="wide")
 
-st.title("🤖 Multi-Page AI QA Testing Agent")
+st.title("🤖 Smart AI QA Testing Agent")
 
 url = st.text_input("🌐 Enter Website URL")
 
@@ -141,7 +186,7 @@ if st.button("Run QA Agent"):
         st.warning("Please enter a URL")
 
     else:
-        st.info("Exploring multiple pages...")
+        st.info("Running combined UI + interaction testing...")
 
         try:
             loop = asyncio.new_event_loop()
@@ -163,8 +208,20 @@ if st.button("Run QA Agent"):
                 st.markdown(f"## 🌐 Page {i+1}")
                 st.markdown(f"🔗 {r['url']}")
 
+                # 🧠 Test case description
+                st.markdown("### 🧪 Test Case:")
+                for t in r["test_case"]:
+                    st.markdown(f"- {t}")
+
+                # 🖱 Actions
+                if r["actions"]:
+                    st.markdown("### ⚡ Actions Performed:")
+                    for a in r["actions"]:
+                        st.markdown(f"- {a}")
+
+                # 🚨 Bugs
                 if r["bugs"]:
-                    st.error("Issues found")
+                    st.error(f"{len(r['bugs'])} issue(s) found")
                     for b in r["bugs"]:
                         st.markdown(f"- ⚠️ {b}")
                 else:
