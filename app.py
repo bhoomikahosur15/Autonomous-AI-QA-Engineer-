@@ -4,7 +4,7 @@ import os
 from urllib.parse import urljoin
 from playwright.async_api import async_playwright
 
-# ================= CONFIG =================
+# ================= CONFIG ================
 MAX_PAGES = 2
 MAX_ELEMENTS = 10
 
