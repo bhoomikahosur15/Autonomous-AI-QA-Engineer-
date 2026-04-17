@@ -25,19 +25,6 @@ async def detect_bugs(page):
     return bugs
 
 
-# ================= HUMAN SCROLL =================
-async def human_scroll(page):
-    for _ in range(2):
-        await page.mouse.wheel(0, 2000)
-        await page.wait_for_timeout(500)
-
-
-# ================= PRIORITIZE ELEMENTS =================
-async def prioritize_elements(page):
-    elements = await page.query_selector_all("a, button, input, select")
-    return elements[:5]  # keep it simple + fast
-
-
 # ================= INTERACTION =================
 async def interact(page, el):
     try:
@@ -45,26 +32,26 @@ async def interact(page, el):
 
         if tag == "input":
             await el.fill("test123")
-            return "Filled input"
-
-        elif tag == "select":
-            options = await el.query_selector_all("option")
-            if options:
-                val = await options[0].get_attribute("value")
-                await el.select_option(val)
-                return "Selected dropdown"
+            return ("Fill input", "PASS", "Input accepted")
 
         else:
+            prev_url = page.url
+
             try:
                 async with page.expect_navigation(timeout=3000):
                     await el.click()
             except:
                 await el.click()
 
-            return "Clicked element"
+            await page.wait_for_timeout(1000)
+
+            if page.url != prev_url:
+                return ("Click element", "PASS", "Navigation happened")
+            else:
+                return ("Click element", "FAIL", "No navigation")
 
     except Exception as e:
-        return f"Failed: {str(e)}"
+        return ("Interaction", "FAIL", str(e))
 
 
 # ================= ELEMENT TESTING =================
@@ -77,42 +64,18 @@ async def test_elements(page):
         for el in elements[:5]:
             try:
                 text = (await el.inner_text() or "").strip()[:30]
-                tag = await el.evaluate("el => el.tagName.toLowerCase()")
-                prev_url = page.url
 
-                if tag == "input":
-                    await el.fill("test123")
-                    results.append({
-                        "action": f"Fill input '{text}'",
-                        "status": "PASS",
-                        "reason": "Input accepted"
-                    })
+                action, status, reason = await interact(page, el)
 
-                else:
-                    try:
-                        async with page.expect_navigation(timeout=3000):
-                            await el.click()
-                    except:
-                        await el.click()
-
-                    await page.wait_for_timeout(1000)
-
-                    if page.url != prev_url:
-                        results.append({
-                            "action": f"Click '{text}'",
-                            "status": "PASS",
-                            "reason": "Navigation successful"
-                        })
-                    else:
-                        results.append({
-                            "action": f"Click '{text}'",
-                            "status": "FAIL",
-                            "reason": "No navigation happened"
-                        })
+                results.append({
+                    "action": f"{action} '{text}'",
+                    "status": status,
+                    "reason": reason
+                })
 
             except Exception as e:
                 results.append({
-                    "action": f"Interact '{text}'",
+                    "action": "Element interaction",
                     "status": "FAIL",
                     "reason": str(e)
                 })
@@ -126,9 +89,11 @@ async def test_elements(page):
 
     return results
 
+
 # ================= LINK EXTRACTION =================
 async def extract_links(page, base_url, visited):
     links = set()
+
     anchors = await page.query_selector_all("a")
 
     for a in anchors:
@@ -145,7 +110,7 @@ async def extract_links(page, base_url, visited):
 
 
 # ================= MAIN AGENT =================
-async def explore(context, start_url, max_pages=3):
+async def explore(context, start_url, max_pages=2):
     visited = set()
     queue = [start_url]
     results = []
@@ -160,11 +125,8 @@ async def explore(context, start_url, max_pages=3):
         page = await context.new_page()
 
         try:
-            # ✅ FIXED NAVIGATION
             await page.goto(url, timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(2000)
-
-            await human_scroll(page)
 
             test_case = [
                 "Page Load Validation",
@@ -173,7 +135,7 @@ async def explore(context, start_url, max_pages=3):
             ]
 
             page_bugs = await detect_bugs(page)
-            actions, element_bugs = await test_elements(page)
+            actions = await test_elements(page)
 
             screenshot = f"screenshots/page_{len(visited)}.png"
             await page.screenshot(path=screenshot)
@@ -182,26 +144,21 @@ async def explore(context, start_url, max_pages=3):
                 "url": url,
                 "test_case": test_case,
                 "actions": actions,
-                "bugs": page_bugs + element_bugs,
+                "bugs": page_bugs,
                 "screenshot": screenshot
             })
 
             new_links = await extract_links(page, url, visited)
-            queue.extend(new_links[:2])
+            queue.extend(new_links[:1])
 
         except Exception as e:
-            # ✅ FIXED FALLBACK (DOES NOT BREAK FLOW)
             results.append({
                 "url": url,
-                "test_case": [
-                    "Page Load Validation",
-                    "Fallback Handling"
-                ],
+                "test_case": ["Page Load Validation"],
                 "actions": [],
                 "bugs": [f"Handled error: {str(e)}"],
                 "screenshot": None
             })
-            continue
 
         finally:
             await page.close()
@@ -213,11 +170,7 @@ async def explore(context, start_url, max_pages=3):
 async def run_agent(url):
     async with async_playwright() as p:
 
-        browser = await p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox"]
-        )
-
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         context = await browser.new_context()
 
         results = await explore(context, url)
@@ -260,14 +213,11 @@ if st.button("Run Agent"):
             st.markdown(f"## 🌐 Page {i+1}")
             st.markdown(f"🔗 {r['url']}")
 
-            # 🧪 Test Cases
             st.markdown("### 🧪 Test Cases:")
             for t in r["test_case"]:
                 st.markdown(f"- {t}")
 
-            # ⚡ Action Results (UPDATED)
             st.markdown("### ⚡ Action Results:")
-
             if r["actions"]:
                 for res in r["actions"]:
                     if res["status"] == "PASS":
@@ -277,7 +227,6 @@ if st.button("Run Agent"):
             else:
                 st.info("No actions performed")
 
-            # 🚨 Issues (UPDATED)
             if r["bugs"]:
                 st.markdown("### 🚨 Issues Found:")
                 for b in r["bugs"]:
@@ -285,7 +234,6 @@ if st.button("Run Agent"):
             else:
                 st.success("No issues")
 
-            # 📸 Screenshot
             if r["screenshot"]:
                 st.image(r["screenshot"])
 
