@@ -19,8 +19,14 @@ async def detect_bugs(page):
         if "404" in body:
             bugs.append("Broken page (404)")
 
+        if "error" in body_lower and "login" not in body_lower:
+            bugs.append("Unexpected error message")
+
+        if len(body.strip()) < 50:
+            bugs.append("Empty or broken UI")
+
     except Exception as e:
-        bugs.append(f"Analysis failed: {str(e)}")
+        bugs.append(f"Bug detection failed: {str(e)}")
 
     return bugs
 
@@ -29,26 +35,43 @@ async def detect_bugs(page):
 async def interact(page, el):
     try:
         tag = await el.evaluate("el => el.tagName.toLowerCase()")
+        prev_url = page.url
+        prev_content = await page.inner_text("body")
 
+        # INPUT FIELD
         if tag == "input":
             await el.fill("test123")
             return ("Fill input", "PASS", "Input accepted")
 
-        else:
-            prev_url = page.url
+        # SELECT DROPDOWN
+        if tag == "select":
+            options = await el.query_selector_all("option")
+            if options:
+                value = await options[0].get_attribute("value")
+                await el.select_option(value=value)
+                return ("Select dropdown", "PASS", "Option selected")
 
-            try:
-                async with page.expect_navigation(timeout=3000):
-                    await el.click()
-            except:
+        # CLICKABLE ELEMENTS
+        try:
+            async with page.expect_navigation(timeout=3000):
                 await el.click()
+        except:
+            await el.click()
 
-            await page.wait_for_timeout(1000)
+        await page.wait_for_timeout(1500)
 
-            if page.url != prev_url:
-                return ("Click element", "PASS", "Navigation happened")
-            else:
-                return ("Click element", "FAIL", "No navigation")
+        new_url = page.url
+        new_content = await page.inner_text("body")
+
+        # ✅ MULTI CHECK (IMPORTANT FIX)
+        if new_url != prev_url:
+            return ("Click", "PASS", "Navigation happened")
+
+        elif new_content != prev_content:
+            return ("Click", "PASS", "DOM changed (AJAX/UI update)")
+
+        else:
+            return ("Click", "FAIL", "No visible effect")
 
     except Exception as e:
         return ("Interaction", "FAIL", str(e))
@@ -61,9 +84,9 @@ async def test_elements(page):
     try:
         elements = await page.query_selector_all("a, button, input, select")
 
-        for el in elements[:5]:
+        for el in elements:   # ✅ REMOVED LIMIT
             try:
-                text = (await el.inner_text() or "").strip()[:30]
+                text = (await el.inner_text() or "").strip()[:40]
 
                 action, status, reason = await interact(page, el)
 
@@ -110,7 +133,7 @@ async def extract_links(page, base_url, visited):
 
 
 # ================= MAIN AGENT =================
-async def explore(context, start_url, max_pages=2):
+async def explore(context, start_url, max_pages=5):
     visited = set()
     queue = [start_url]
     results = []
@@ -131,7 +154,7 @@ async def explore(context, start_url, max_pages=2):
             test_case = [
                 "Page Load Validation",
                 "UI Interaction Testing",
-                "Element Navigation Testing"
+                "Dynamic UI Validation (DOM/AJAX)"
             ]
 
             page_bugs = await detect_bugs(page)
@@ -148,8 +171,9 @@ async def explore(context, start_url, max_pages=2):
                 "screenshot": screenshot
             })
 
+            # ✅ MORE EXPLORATION
             new_links = await extract_links(page, url, visited)
-            queue.extend(new_links[:1])
+            queue.extend(new_links[:3])   # increased
 
         except Exception as e:
             results.append({
@@ -169,7 +193,6 @@ async def explore(context, start_url, max_pages=2):
 # ================= RUN =================
 async def run_agent(url):
     async with async_playwright() as p:
-
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         context = await browser.new_context()
 
