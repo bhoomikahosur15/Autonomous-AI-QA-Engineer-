@@ -260,22 +260,32 @@ if st.button("Run Agent"):
             st.markdown(f"## 🌐 Page {i+1}")
             st.markdown(f"🔗 {r['url']}")
 
+            # 🧪 Test Cases
             st.markdown("### 🧪 Test Cases:")
             for t in r["test_case"]:
                 st.markdown(f"- {t}")
 
-            if r["actions"]:
-                st.markdown("### ⚡ Actions:")
-                for a in r["actions"]:
-                    st.markdown(f"- {a}")
+            # ⚡ Action Results (UPDATED)
+            st.markdown("### ⚡ Action Results:")
 
+            if r["actions"]:
+                for res in r["actions"]:
+                    if res["status"] == "PASS":
+                        st.success(f"✅ {res['action']} → {res['reason']}")
+                    else:
+                        st.error(f"❌ {res['action']} → {res['reason']}")
+            else:
+                st.info("No actions performed")
+
+            # 🚨 Issues (UPDATED)
             if r["bugs"]:
-                st.error(f"{len(r['bugs'])} issue(s)")
+                st.markdown("### 🚨 Issues Found:")
                 for b in r["bugs"]:
-                    st.markdown(f"- ⚠️ {b}")
+                    st.error(f"⚠️ {b}")
             else:
                 st.success("No issues")
 
+            # 📸 Screenshot
             if r["screenshot"]:
                 st.image(r["screenshot"])
 
