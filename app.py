@@ -36,14 +36,24 @@ async def interact(page, el):
     try:
         tag = await el.evaluate("el => el.tagName.toLowerCase()")
         prev_url = page.url
-        prev_content = await page.inner_text("body")
 
-        # INPUT FIELD
+        # JS signals
+        prev_dom = await page.evaluate("document.body.innerText.length")
+
+        api_called = {"value": False}
+
+        def handle_request(req):
+            if req.resource_type in ["xhr", "fetch"]:
+                api_called["value"] = True
+
+        page.on("request", handle_request)
+
+        # INPUT
         if tag == "input":
             await el.fill("test123")
             return ("Fill input", "PASS", "Input accepted")
 
-        # SELECT DROPDOWN
+        # SELECT
         if tag == "select":
             options = await el.query_selector_all("option")
             if options:
@@ -51,7 +61,7 @@ async def interact(page, el):
                 await el.select_option(value=value)
                 return ("Select dropdown", "PASS", "Option selected")
 
-        # CLICKABLE ELEMENTS
+        # CLICK
         try:
             async with page.expect_navigation(timeout=3000):
                 await el.click()
@@ -61,14 +71,20 @@ async def interact(page, el):
         await page.wait_for_timeout(1500)
 
         new_url = page.url
-        new_content = await page.inner_text("body")
+        new_dom = await page.evaluate("document.body.innerText.length")
 
-        # ✅ MULTI CHECK (IMPORTANT FIX)
+        # REMOVE listener (important to avoid leaks)
+        page.remove_listener("request", handle_request)
+
+        # 🔥 SMART DETECTION
         if new_url != prev_url:
             return ("Click", "PASS", "Navigation happened")
 
-        elif new_content != prev_content:
-            return ("Click", "PASS", "DOM changed (AJAX/UI update)")
+        elif api_called["value"]:
+            return ("Click", "PASS", "API call triggered (JS action)")
+
+        elif new_dom != prev_dom:
+            return ("Click", "PASS", "DOM updated (UI change)")
 
         else:
             return ("Click", "FAIL", "No visible effect")
@@ -84,7 +100,7 @@ async def test_elements(page):
     try:
         elements = await page.query_selector_all("a, button, input, select")
 
-        for el in elements:   # ✅ REMOVED LIMIT
+        for el in elements:
             try:
                 text = (await el.inner_text() or "").strip()[:40]
 
@@ -154,7 +170,7 @@ async def explore(context, start_url, max_pages=5):
             test_case = [
                 "Page Load Validation",
                 "UI Interaction Testing",
-                "Dynamic UI Validation (DOM/AJAX)"
+                "JS Dynamic Behavior Validation"
             ]
 
             page_bugs = await detect_bugs(page)
@@ -171,9 +187,8 @@ async def explore(context, start_url, max_pages=5):
                 "screenshot": screenshot
             })
 
-            # ✅ MORE EXPLORATION
             new_links = await extract_links(page, url, visited)
-            queue.extend(new_links[:3])   # increased
+            queue.extend(new_links[:3])
 
         except Exception as e:
             results.append({
