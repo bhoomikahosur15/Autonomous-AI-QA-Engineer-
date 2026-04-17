@@ -69,33 +69,62 @@ async def interact(page, el):
 
 # ================= ELEMENT TESTING =================
 async def test_elements(page):
-    actions = []
-    bugs = []
+    results = []
 
     try:
-        elements = await prioritize_elements(page)
+        elements = await page.query_selector_all("a, button, input, select")
 
-        for el in elements:
+        for el in elements[:5]:
             try:
                 text = (await el.inner_text() or "").strip()[:30]
+                tag = await el.evaluate("el => el.tagName.toLowerCase()")
                 prev_url = page.url
 
-                action = await interact(page, el)
-                await page.wait_for_timeout(1000)
+                if tag == "input":
+                    await el.fill("test123")
+                    results.append({
+                        "action": f"Fill input '{text}'",
+                        "status": "PASS",
+                        "reason": "Input accepted"
+                    })
 
-                if page.url == prev_url and "Clicked" in action:
-                    bugs.append(f"No navigation after '{text}'")
+                else:
+                    try:
+                        async with page.expect_navigation(timeout=3000):
+                            await el.click()
+                    except:
+                        await el.click()
 
-                actions.append(f"{action}: '{text}'")
+                    await page.wait_for_timeout(1000)
+
+                    if page.url != prev_url:
+                        results.append({
+                            "action": f"Click '{text}'",
+                            "status": "PASS",
+                            "reason": "Navigation successful"
+                        })
+                    else:
+                        results.append({
+                            "action": f"Click '{text}'",
+                            "status": "FAIL",
+                            "reason": "No navigation happened"
+                        })
 
             except Exception as e:
-                bugs.append(f"Interaction failed: {str(e)}")
+                results.append({
+                    "action": f"Interact '{text}'",
+                    "status": "FAIL",
+                    "reason": str(e)
+                })
 
-    except:
-        bugs.append("Element detection failed")
+    except Exception as e:
+        results.append({
+            "action": "Element detection",
+            "status": "FAIL",
+            "reason": str(e)
+        })
 
-    return actions, bugs
-
+    return results
 
 # ================= LINK EXTRACTION =================
 async def extract_links(page, base_url, visited):
