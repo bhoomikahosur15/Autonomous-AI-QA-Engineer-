@@ -8,7 +8,7 @@ from playwright.async_api import async_playwright
 MAX_PAGES = 2
 MAX_ELEMENTS = 10
 
-# ================= PRIORITIZATION =================
+# ================= PRIORITIZATION ================
 async def prioritize_elements(page):
     elements = await page.query_selector_all("a, button, input")
 
