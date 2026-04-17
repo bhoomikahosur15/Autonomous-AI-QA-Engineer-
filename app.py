@@ -6,24 +6,6 @@ from playwright.async_api import async_playwright
 
 os.makedirs("screenshots", exist_ok=True)
 
-# ================= MANUAL STEALTH =================
-async def apply_stealth(page):
-    await page.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-
-        window.chrome = { runtime: {} };
-
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en']
-        });
-
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
-        });
-    """)
-
 # ================= BUG DETECTION =================
 async def detect_bugs(page):
     bugs = []
@@ -32,7 +14,7 @@ async def detect_bugs(page):
         body_lower = body.lower()
 
         if "something went wrong" in body_lower:
-            bugs.append("Page crashed / blocked")
+            bugs.append("Page crashed")
 
         if "404" in body:
             bugs.append("Broken page (404)")
@@ -42,39 +24,19 @@ async def detect_bugs(page):
 
     return bugs
 
+
 # ================= HUMAN SCROLL =================
 async def human_scroll(page):
-    for _ in range(3):
+    for _ in range(2):
         await page.mouse.wheel(0, 2000)
-        await page.wait_for_timeout(700)
+        await page.wait_for_timeout(500)
 
-# ================= AI PRIORITIZATION =================
+
+# ================= PRIORITIZE ELEMENTS =================
 async def prioritize_elements(page):
     elements = await page.query_selector_all("a, button, input, select")
-    scored = []
+    return elements[:5]  # keep it simple + fast
 
-    for el in elements:
-        try:
-            text = (await el.inner_text() or "").lower()
-            tag = await el.evaluate("el => el.tagName.toLowerCase()")
-
-            score = 0
-            if "login" in text or "sign" in text:
-                score += 10
-            if "next" in text or "submit" in text:
-                score += 8
-            if tag == "input":
-                score += 7
-            if tag == "button":
-                score += 5
-
-            scored.append((score, el, text))
-
-        except:
-            continue
-
-    scored.sort(reverse=True, key=lambda x: x[0])
-    return [el for _, el, _ in scored[:6]]
 
 # ================= INTERACTION =================
 async def interact(page, el):
@@ -94,7 +56,7 @@ async def interact(page, el):
 
         else:
             try:
-                async with page.expect_navigation(timeout=4000):
+                async with page.expect_navigation(timeout=3000):
                     await el.click()
             except:
                 await el.click()
@@ -103,6 +65,7 @@ async def interact(page, el):
 
     except Exception as e:
         return f"Failed: {str(e)}"
+
 
 # ================= ELEMENT TESTING =================
 async def test_elements(page):
@@ -114,11 +77,11 @@ async def test_elements(page):
 
         for el in elements:
             try:
-                text = (await el.inner_text() or "").strip()[:40]
+                text = (await el.inner_text() or "").strip()[:30]
                 prev_url = page.url
 
                 action = await interact(page, el)
-                await page.wait_for_load_state("domcontentloaded")
+                await page.wait_for_timeout(1000)
 
                 if page.url == prev_url and "Clicked" in action:
                     bugs.append(f"No navigation after '{text}'")
@@ -133,29 +96,27 @@ async def test_elements(page):
 
     return actions, bugs
 
+
 # ================= LINK EXTRACTION =================
 async def extract_links(page, base_url, visited):
     links = set()
-
     anchors = await page.query_selector_all("a")
 
     for a in anchors:
         try:
             href = await a.get_attribute("href")
-
             if href and "javascript" not in href:
                 full_url = urljoin(base_url, href)
-
                 if full_url.startswith("http") and full_url not in visited:
                     links.add(full_url)
-
         except:
             continue
 
     return list(links)
 
+
 # ================= MAIN AGENT =================
-async def explore(context, start_url, max_pages=4):
+async def explore(context, start_url, max_pages=3):
     visited = set()
     queue = [start_url]
     results = []
@@ -170,16 +131,16 @@ async def explore(context, start_url, max_pages=4):
         page = await context.new_page()
 
         try:
-            await apply_stealth(page)   # 🔥 manual stealth
-            await page.goto(url, timeout=20000)
+            # ✅ FIXED NAVIGATION
+            await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000)
 
             await human_scroll(page)
 
             test_case = [
                 "Page Load Validation",
                 "UI Interaction Testing",
-                "Dynamic Content Handling",
-                "AI-based Exploration"
+                "Element Navigation Testing"
             ]
 
             page_bugs = await detect_bugs(page)
@@ -200,40 +161,42 @@ async def explore(context, start_url, max_pages=4):
             queue.extend(new_links[:2])
 
         except Exception as e:
+            # ✅ FIXED FALLBACK (DOES NOT BREAK FLOW)
             results.append({
                 "url": url,
-                "test_case": ["Page Load"],
+                "test_case": [
+                    "Page Load Validation",
+                    "Fallback Handling"
+                ],
                 "actions": [],
-                "bugs": [f"Page failed: {str(e)}"],
+                "bugs": [f"Handled error: {str(e)}"],
                 "screenshot": None
             })
+            continue
 
         finally:
             await page.close()
 
     return results
 
+
 # ================= RUN =================
 async def run_agent(url):
     async with async_playwright() as p:
 
         browser = await p.chromium.launch(
-            headless=True,   # Render safe
-            args=[
-                "--no-sandbox",
-                "--disable-blink-features=AutomationControlled"
-            ]
+            headless=True,
+            args=["--no-sandbox"]
         )
 
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            viewport={"width": 1280, "height": 800}
-        )
+        context = await browser.new_context()
 
         results = await explore(context, url)
 
         await browser.close()
+
     return results
+
 
 # ================= UI =================
 st.set_page_config(page_title="AI QA Agent", layout="wide")
@@ -252,6 +215,17 @@ if st.button("Run Agent"):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         results = loop.run_until_complete(run_agent(url))
+
+        total = len(results)
+        failed = sum(1 for r in results if r["bugs"])
+        passed = total - failed
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Passed", passed)
+        col2.metric("Failed", failed)
+        col3.metric("Pages Tested", total)
+
+        st.divider()
 
         for i, r in enumerate(results):
             st.markdown(f"## 🌐 Page {i+1}")
