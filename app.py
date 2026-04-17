@@ -6,6 +6,30 @@ from playwright.async_api import async_playwright
 
 os.makedirs("screenshots", exist_ok=True)
 
+# ================= HUMAN SCROLL =================
+async def human_scroll(page):
+    try:
+        await page.evaluate("""
+        async () => {
+            await new Promise((resolve) => {
+                let total = 0;
+                let distance = 300;
+                let timer = setInterval(() => {
+                    window.scrollBy(0, distance);
+                    total += distance;
+
+                    if (total >= document.body.scrollHeight){
+                        clearInterval(timer);
+                        resolve();
+                    }
+                }, 200);
+            });
+        }
+        """)
+    except:
+        pass
+
+
 # ================= BUG DETECTION =================
 async def detect_bugs(page):
     bugs = []
@@ -37,7 +61,6 @@ async def interact(page, el):
         tag = await el.evaluate("el => el.tagName.toLowerCase()")
         prev_url = page.url
 
-        # JS signals
         prev_dom = await page.evaluate("document.body.innerText.length")
 
         api_called = {"value": False}
@@ -51,6 +74,7 @@ async def interact(page, el):
         # INPUT
         if tag == "input":
             await el.fill("test123")
+            page.remove_listener("request", handle_request)
             return ("Fill input", "PASS", "Input accepted")
 
         # SELECT
@@ -59,6 +83,7 @@ async def interact(page, el):
             if options:
                 value = await options[0].get_attribute("value")
                 await el.select_option(value=value)
+                page.remove_listener("request", handle_request)
                 return ("Select dropdown", "PASS", "Option selected")
 
         # CLICK
@@ -73,15 +98,14 @@ async def interact(page, el):
         new_url = page.url
         new_dom = await page.evaluate("document.body.innerText.length")
 
-        # REMOVE listener (important to avoid leaks)
         page.remove_listener("request", handle_request)
 
-        # 🔥 SMART DETECTION
+        # SMART DETECTION
         if new_url != prev_url:
             return ("Click", "PASS", "Navigation happened")
 
         elif api_called["value"]:
-            return ("Click", "PASS", "API call triggered (JS action)")
+            return ("Click", "PASS", "API triggered (JS action)")
 
         elif new_dom != prev_dom:
             return ("Click", "PASS", "DOM updated (UI change)")
@@ -164,8 +188,12 @@ async def explore(context, start_url, max_pages=5):
         page = await context.new_page()
 
         try:
-            await page.goto(url, timeout=60000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(2000)
+            # BETTER LOAD STRATEGY
+            await page.goto(url, timeout=60000, wait_until="load")
+            await page.wait_for_timeout(3000)
+
+            # SCROLL (important)
+            await human_scroll(page)
 
             test_case = [
                 "Page Load Validation",
@@ -174,10 +202,18 @@ async def explore(context, start_url, max_pages=5):
             ]
 
             page_bugs = await detect_bugs(page)
-            actions = await test_elements(page)
 
+            try:
+                actions = await test_elements(page)
+            except:
+                actions = []
+
+            # SAFE SCREENSHOT
             screenshot = f"screenshots/page_{len(visited)}.png"
-            await page.screenshot(path=screenshot)
+            try:
+                await page.screenshot(path=screenshot, timeout=10000)
+            except:
+                screenshot = None
 
             results.append({
                 "url": url,
@@ -228,7 +264,6 @@ if st.button("Run Agent"):
 
     if not url:
         st.warning("Enter a URL")
-
     else:
         st.info("Running agent...")
 
